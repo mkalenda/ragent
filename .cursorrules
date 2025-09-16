@@ -1,0 +1,102 @@
+### RAGent — Cursor Rules
+
+These rules guide changes in this repository and help the assistant work productively within the project’s architecture and conventions.
+
+### Tech stack
+- **Language**: Python 3.9+
+- **CLI**: `click`
+- **LLM**: `langchain`, `langchain-openai` (Azure OpenAI via AAD)
+- **Graph Orchestration**: `langgraph`
+- **Vector store**: `chromadb` (persisted locally)
+- **Config**: `.env` (loaded via `python-dotenv`), environment variables prefixed with `RAGENT_`
+
+### Project layout
+- `ragent/cli.py`: Click entry point and command registrar (`ragent` console script)
+- `ragent/commands/ingest.py`: Ingests documents → split → embed → persist to Chroma
+- `ragent/commands/chat.py`: Interactive chat using the RAG graph and Chroma
+- `ragent/graph/rag_graph.py`: Defines the LangGraph pipeline and the `search_documents` tool
+- `ragent/loader/document_loader.py`: Document loading with per-extension loader map
+- `pyproject.toml`: Packaging, dependencies, Ruff config, console script
+- `Makefile`: Quick dev tasks using `hatch`
+- `README.md`: Setup and usage overview
+
+### How the system works (functional overview)
+1. **Ingestion (`ragent ingest`)**
+   - Loads files from a directory using `DirectoryLoader` and a custom loader map.
+   - Splits content with `RecursiveCharacterTextSplitter`.
+   - Creates or updates a persisted `Chroma` DB with Azure OpenAI embeddings.
+2. **Chat (`ragent chat`)**
+   - Reconstructs embeddings and Chroma from the persist directory.
+   - Builds a `langgraph` graph with an `@tool` that queries the vector store.
+   - Runs an interactive loop; the model chooses whether to call tools, then responds.
+
+### Commands (run/dev)
+- Install dev tooling and package:
+  - `make env` → `hatch env create`
+  - `make install` → `hatch run pip install -e .`
+  - `make shell` → `hatch shell`
+- Core workflows:
+  - `ragent ingest <input_dir>` (or `python -m ragent.commands.ingest <args>`)
+  - `ragent chat`
+
+### Required environment variables
+Set via `.env` or your shell. All have `RAGENT_` prefix.
+- `RAGENT_AOAI_ENDPOINT` — Azure OpenAI endpoint URL
+- `RAGENT_EMBEDDING_DEPLOYMENT_NAME`
+- `RAGENT_EMBEDDING_DEPLOYMENT_VERSION`
+- `RAGENT_LLM_DEPLOYMENT_NAME`
+- `RAGENT_LLM_DEPLOYMENT_VERSION`
+- `RAGENT_PERSIST_DIR` — Chroma persist directory (e.g., `./chroma_db`)
+- Optional tuning:
+  - `RAGENT_CHUNK_SIZE` (default 500), `RAGENT_CHUNK_OVERLAP` (default 50)
+  - `RAGENT_BATCH_SIZE` (default 100)
+
+Notes:
+- Authentication uses **Azure AD** via `DefaultAzureCredential` and a bearer token provider.
+- Prefer environment variables over passing CLI flags for secrets/config.
+
+### Coding conventions
+- Follow `ruff` configuration in `pyproject.toml`:
+  - Line length 100; target `py39`
+  - Format with double quotes; 4-space indentation
+  - Lints enabled: `E, F, I, N, W, B, UP`
+- General guidelines:
+  - Add type hints to public functions; use clear, descriptive names.
+  - Use docstrings for modules, classes, and non-trivial functions.
+  - Guard clauses over deep nesting; handle edge cases early.
+  - Do not catch exceptions without meaningful handling.
+  - Keep CLI options mirrored by env vars with the `RAGENT_` prefix.
+
+### Extension points and patterns
+- Add a new CLI command:
+  1) Create `ragent/commands/<name>.py` with a `@click.command()` entry.
+  2) Import it in `ragent/cli.py` and register with `cli.add_command(<name>)`.
+- Support a new file type for ingestion:
+  - Update the `loader_map` in `ragent/loader/document_loader.py` with the extension → loader mapping.
+- Add model tools or new graph behavior:
+  - Define `@tool` functions in `ragent/graph/rag_graph.py` and add them to the `tools` list.
+- Adjust chunking/recall behavior:
+  - Tune `chunk_size`, `chunk_overlap`, and Chroma `k` in `rag_graph.py` (similarity search).
+
+### Quality gates
+- Run format/lint locally (if you have `ruff` installed):
+  - `ruff format .` and `ruff check . --fix`
+- Ensure new dependencies are added to `[project.dependencies]` in `pyproject.toml`.
+- Keep README examples and env var docs in sync with code changes.
+
+### Known gaps to address (when relevant to your change)
+- `azure-identity` and `tqdm` are used in code but are not listed in `pyproject.toml` dependencies. When touching packaging or relying on these, add:
+  - `azure-identity>=1.15.0`
+  - `tqdm>=4.66.0`
+- The README references `.env.example`; consider adding it when updating docs/config.
+
+### Safety and privacy
+- Do not hardcode secrets. Rely on `.env` and environment variables.
+- The persisted vector DB path defaults to a local directory; avoid committing its contents.
+
+### Quick reference
+- Entry point: console script `ragent` → `ragent.cli:cli`
+- Ingest: `ragent ingest <input_dir>`
+- Chat: `ragent chat`
+- Persist dir: `RAGENT_PERSIST_DIR` (must exist for `chat`, created by `ingest`)
+
